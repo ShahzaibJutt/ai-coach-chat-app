@@ -30,7 +30,7 @@ export function AuthProvider({ children }) {
   // Login function
   async function login(username, password) {
     try {
-      const response = await axios.post('http://localhost:8000/api/auth/login', {
+      const response = await axios.post(`${import.meta.env.VITE_BACKEND_API_URL}/auth/login`, {
         username,
         password
       });
@@ -66,7 +66,7 @@ export function AuthProvider({ children }) {
   // Signup function
   async function signup(username, email, password, fullName = '') {
     try {
-      const response = await axios.post('http://localhost:8000/api/auth/register', {
+      const response = await axios.post(`${import.meta.env.VITE_BACKEND_API_URL}/auth/register`, {
         username,
         email,
         password,

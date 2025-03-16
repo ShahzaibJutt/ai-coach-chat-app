@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useStreamChat } from '../contexts/StreamChatContext';
 import { useNavigate } from 'react-router-dom';
@@ -16,6 +16,7 @@ import {
   Bell,
   Brain
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 
 function Dashboard() {
   const { currentUser, logout } = useAuth();
@@ -30,6 +31,55 @@ function Dashboard() {
   const [showNewChannelForm, setShowNewChannelForm] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  
+  // Ref for message container to enable auto-scrolling
+  const messagesEndRef = useRef(null);
+
+  // Function to scroll to bottom of messages
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Auto-scroll when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Function to handle new messages and forward them to the AI backend
+  const handleNewMessage = useCallback(async (event) => {
+    // Only forward messages from the current user (not from the AI)
+    if (event.user?.id === currentUser.userId) {
+      try {
+        console.log('Forwarding message to AI backend:', event);
+        
+        // Format the message according to what the backend expects
+        const payload = {
+          message: event.message,
+          user: event.user,
+          cid: event.cid,
+          type: 'message.new'
+        };
+        
+        // Send the message to your backend using the environment variable
+        const response = await fetch(`${import.meta.env.VITE_BACKEND_API_URL}/ai/new-message`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentUser.token}`
+          },
+          body: JSON.stringify(payload),
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Backend responded with status: ${response.status}`);
+        }
+        
+        console.log('Successfully sent message to AI backend');
+      } catch (error) {
+        console.error('Error forwarding message to AI backend:', error);
+      }
+    }
+  }, [currentUser]);
 
   // Load channels when chat client is ready
   useEffect(() => {
@@ -45,7 +95,7 @@ function Dashboard() {
         console.log('Loading channels for user:', currentUser?.userId);
         
         const filter = { type: 'messaging', members: { $in: [currentUser.userId] } };
-        const sort = [{ last_message_at: -1 }];
+        const sort = [{ last_message_at: -1 }]; // Sort by most recent message
         
         const channels = await chatClient.queryChannels(filter, sort, {
           watch: true,
@@ -71,18 +121,46 @@ function Dashboard() {
     }
   }, [chatClient, currentUser]);
 
-  // Load messages when a channel is selected
+  // Load messages when a channel is selected and set up message listeners
   useEffect(() => {
     if (selectedChannel) {
       const loadMessages = async () => {
         try {
           // Get the last 25 messages
-          const response = await selectedChannel.query({ messages: { limit: 25 } });
+          const response = await selectedChannel.query({ messages: { limit: 50 } }); // Increased limit to load more history
           setMessages(response.messages);
           
           // Listen for new messages
           selectedChannel.on('message.new', (event) => {
-            setMessages((prevMessages) => [...prevMessages, event.message]);
+            // Check if this message already exists in our state to prevent duplicates
+            setMessages((prevMessages) => {
+              // Check if we already have this message
+              const messageExists = prevMessages.some(msg => msg.id === event.message.id);
+              if (messageExists) {
+                return prevMessages; // Don't add duplicate
+              }
+              return [...prevMessages, event.message]; // Add new message
+            });
+            
+            // Only forward user messages to the AI backend
+            if (event.user?.id === currentUser.userId) {
+              handleNewMessage(event);
+            }
+            
+            // Move this channel to the top of the list
+            setChannels(prevChannels => {
+              const updatedChannels = [...prevChannels];
+              const channelIndex = updatedChannels.findIndex(c => c.id === selectedChannel.id);
+              
+              if (channelIndex > 0) {
+                // Remove the channel from its current position
+                const [channel] = updatedChannels.splice(channelIndex, 1);
+                // Add it to the beginning of the array
+                updatedChannels.unshift(channel);
+              }
+              
+              return updatedChannels;
+            });
           });
         } catch (error) {
           console.error('Error loading messages:', error);
@@ -96,7 +174,7 @@ function Dashboard() {
         selectedChannel.off('message.new');
       };
     }
-  }, [selectedChannel]);
+  }, [selectedChannel, handleNewMessage, currentUser]);
 
   const handleLogout = () => {
     logout();
@@ -126,22 +204,52 @@ function Dashboard() {
       // Create a unique channel ID
       const channelId = `${newChannelName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
       
-      // Create the channel with the current user and shahzaib as members
+      // Create the channel with the current user and AI bot as members
+      // Use the environment variable for the AI bot user ID
       const channel = chatClient.channel('messaging', channelId, {
         name: newChannelName,
-        members: [currentUser.userId, 'shahzaib'],
+        members: [currentUser.userId, import.meta.env.VITE_AI_BOT_USER_ID],
         created_by_id: currentUser.userId
       });
       
       await channel.create();
       console.log('Chat created successfully:', channel.id);
-      setChannels((prevChannels) => [...prevChannels, channel]);
+      
+      // Watch the channel to receive updates
+      await channel.watch();
+      
+      // Add the new channel at the beginning of the array
+      setChannels((prevChannels) => [channel, ...prevChannels]);
+      
+      // Set as selected channel and clear messages
       setSelectedChannel(channel);
+      setMessages([]);
       setNewChannelName('');
       setShowNewChannelForm(false);
+      
+      // No welcome message - removed as requested
     } catch (error) {
       console.error('Error creating chat:', error);
       alert('Failed to create chat: ' + error.message);
+    }
+  };
+
+  const selectChannel = async (channel) => {
+    setSelectedChannel(channel);
+    
+    // Clear messages while loading
+    setMessages([]);
+    
+    try {
+      // Get the last 25 messages
+      const response = await channel.query({ messages: { limit: 25 } });
+      setMessages(response.messages);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+    
+    if (window.innerWidth < 768) { // Mobile view
+      setSidebarCollapsed(true);
     }
   };
 
@@ -154,9 +262,9 @@ function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-100">
       {/* Enhanced Header with AI Coach branding */}
-      <header className="bg-white shadow-md z-10">
+      <header className="bg-white shadow-md z-10 flex-shrink-0">
         <div className="max-w-7xl mx-auto py-3 px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center">
             {/* Left section with logo and toggle */}
@@ -208,7 +316,7 @@ function Dashboard() {
       
       {/* Mobile Menu */}
       {showMobileMenu && (
-        <div className="md:hidden bg-white border-b border-gray-200 shadow-sm">
+        <div className="md:hidden bg-white border-b border-gray-200 shadow-sm flex-shrink-0">
           <div className="p-4 flex justify-between items-center">
             <h2 className="font-semibold">Menu</h2>
             <button onClick={toggleMobileMenu} className="p-2">
@@ -246,7 +354,7 @@ function Dashboard() {
         </div>
       )}
       
-      <main className="flex-grow flex overflow-hidden">
+      <main className="flex flex-1 overflow-hidden">
         {/* Sidebar - Chat List */}
         <div 
           className={`bg-white border-r border-gray-200 flex flex-col transition-all duration-300 ease-in-out ${
@@ -302,19 +410,14 @@ function Dashboard() {
                 {channels.map((channel) => (
                   <li key={channel.id}>
                     <button
-                      onClick={() => {
-                        setSelectedChannel(channel);
-                        if (window.innerWidth < 768) { // Mobile view
-                          setSidebarCollapsed(true);
-                        }
-                      }}
+                      onClick={() => selectChannel(channel)}
                       className={`w-full text-left p-3 flex items-center ${
                         selectedChannel?.id === channel.id
                           ? 'bg-blue-50 border-l-4 border-blue-500'
                           : 'hover:bg-gray-50'
                       } ${sidebarCollapsed ? 'justify-center p-2' : ''}`}
                     >
-                      <MessageCircle size={20} className={`${sidebarCollapsed ? '' : 'mr-2'} text-gray-500`} />
+                      <MessageCircle size={20} className={`${sidebarCollapsed ? '' : 'mr-2'} text-gray-500 flex-shrink-0`} />
                       {!sidebarCollapsed && (
                         <div className="overflow-hidden">
                           <p className="font-medium truncate">{channel.data.name || 'Direct Message'}</p>
@@ -332,11 +435,11 @@ function Dashboard() {
         </div>
         
         {/* Main Chat Area */}
-        <div className={`flex-grow flex flex-col transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'md:w-[calc(100%-4rem)]' : 'md:w-3/4'}`}>
+        <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'md:w-[calc(100%-4rem)]' : 'md:w-3/4'}`}>
           {selectedChannel ? (
             <>
               {/* Channel Header */}
-              <div className="p-4 border-b border-gray-200 bg-white shadow-sm flex items-center">
+              <div className="p-4 border-b border-gray-200 bg-white shadow-sm flex items-center flex-shrink-0">
                 {!sidebarCollapsed && window.innerWidth < 768 && (
                   <button 
                     onClick={toggleSidebar}
@@ -356,8 +459,8 @@ function Dashboard() {
                 </div>
               </div>
               
-              {/* Messages */}
-              <div className="flex-grow p-4 overflow-y-auto bg-gray-50">
+              {/* Messages with Markdown support */}
+              <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
                 {messages.length === 0 ? (
                   <div className="text-center text-gray-500 mt-10">
                     <Brain size={40} className="mx-auto mb-3 opacity-50" />
@@ -365,9 +468,9 @@ function Dashboard() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {messages.map((message) => (
+                    {messages.map((message, index) => (
                       <div
-                        key={message.id}
+                        key={`${message.id}-${index}`}
                         className={`flex ${
                           message.user?.id === currentUser.userId ? 'justify-end' : 'justify-start'
                         }`}
@@ -381,7 +484,7 @@ function Dashboard() {
                         >
                           {message.user?.id !== currentUser.userId && (
                             <p className="font-semibold text-xs mb-1 flex items-center">
-                              {message.user?.id === 'shahzaib' ? (
+                              {message.user?.id === import.meta.env.VITE_AI_BOT_USER_ID ? (
                                 <>
                                   <Brain size={14} className="mr-1 text-blue-600" />
                                   AI Coach
@@ -391,19 +494,29 @@ function Dashboard() {
                               )}
                             </p>
                           )}
-                          <p>{message.text}</p>
+                          
+                          {/* Render AI messages with markdown, user messages as plain text */}
+                          {message.user?.id === currentUser.userId ? (
+                            <p>{message.text}</p>
+                          ) : (
+                            <div className="markdown-content prose prose-sm max-w-none dark:prose-invert overflow-auto">
+                              <ReactMarkdown>{message.text}</ReactMarkdown>
+                            </div>
+                          )}
+                          
                           <p className="text-xs mt-1 opacity-70">
                             {new Date(message.created_at).toLocaleTimeString()}
                           </p>
                         </div>
                       </div>
                     ))}
+                    <div ref={messagesEndRef} />
                   </div>
                 )}
               </div>
               
               {/* Message Input */}
-              <div className="p-4 border-t border-gray-200 bg-white">
+              <div className="p-4 border-t border-gray-200 bg-white flex-shrink-0">
                 <form onSubmit={handleSendMessage} className="flex">
                   <input
                     type="text"
@@ -422,7 +535,7 @@ function Dashboard() {
               </div>
             </>
           ) : (
-            <div className="flex-grow flex items-center justify-center bg-gray-50">
+            <div className="flex-1 flex items-center justify-center bg-gray-50">
               <div className="text-center text-gray-500">
                 <Brain size={48} className="mx-auto mb-4 opacity-50" />
                 <p className="text-xl font-medium">Select a chat to start coaching</p>

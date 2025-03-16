@@ -1,5 +1,5 @@
 from app.core.database import Base
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, Text
 
 
 class User(Base):
@@ -13,3 +13,4 @@ class User(Base):
     role = Column(String, default="user")
     disabled = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())
+    memory = Column(Text, default="")

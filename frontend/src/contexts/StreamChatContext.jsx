@@ -25,7 +25,7 @@ export function StreamChatProvider({ children }) {
           
           // Create a new client instance if we don't have one
           if (!clientRef.current) {
-            clientRef.current = StreamChat.getInstance('n48t24jeygt9');
+            clientRef.current = StreamChat.getInstance(import.meta.env.VITE_STREAM_API_KEY);
           }
           
           // Connect user to Stream Chat

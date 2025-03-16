@@ -12,3 +12,9 @@ SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
 
 # Database path
 DB_PATH = os.getenv("DB_PATH", "stream_chat_app.db")
+
+# OpenAI API key
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Prebuilt AI user ID
+PREBUILT_AI_USER_ID = os.getenv("PREBUILT_AI_USER_ID")
