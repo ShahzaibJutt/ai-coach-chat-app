@@ -18,7 +18,7 @@ function Register() {
 
     // Validate username (only alphabets and digits)
     useEffect(() => {
-        if (username && !/^[a-zA-Z0-9]+$/.test(username)) {
+        if (username && !/^[a-z0-9]+$/.test(username)) {
             setUsernameError('Username can only contain letters and numbers');
         } else {
             setUsernameError('');
@@ -114,13 +114,14 @@ function Register() {
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                                 <User size={18} className="text-gray-500" />
                             </div>
+                            {/* Username is forced to lowercase */}
                             <input
                                 id="username"
                                 type="text"
                                 className={`pl-10 w-full p-3 border ${usernameError ? 'border-red-500' : 'border-gray-300'} rounded focus:outline-none focus:ring-2 focus:ring-blue-500`}
                                 placeholder="Username (letters and numbers only)"
                                 value={username}
-                                onChange={(e) => setUsername(e.target.value)}
+                                onChange={(e) => setUsername(e.target.value.toLowerCase())}
                                 required
                             />
                         </div>

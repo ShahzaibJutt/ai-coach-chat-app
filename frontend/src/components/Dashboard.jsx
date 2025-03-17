@@ -7,7 +7,6 @@ import {
   Send, 
   Plus, 
   MessageCircle, 
-  MessageSquare, 
   Menu, 
   X, 
   ChevronLeft,
@@ -32,7 +31,7 @@ function Dashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   
-  // Ref for message container to enable auto-scrolling
+  // Ref for auto-scrolling
   const messagesEndRef = useRef(null);
 
   // Function to scroll to bottom of messages
@@ -45,22 +44,58 @@ function Dashboard() {
     scrollToBottom();
   }, [messages]);
 
-  // Function to handle new messages and forward them to the AI backend
+  // Load channels when chat client or user changes (do not depend on selectedChannel)
+  useEffect(() => {
+    const loadChannels = async () => {
+      if (!chatClient) {
+        console.log('Chat client not available');
+        setLoading(false);
+        return;
+      }
+      
+      try {
+        setLoading(true);
+        console.log('Loading channels for user:', currentUser?.userId);
+        
+        const filter = { type: 'messaging', members: { $in: [currentUser.userId] } };
+        const sort = [{ last_message_at: -1 }];
+        
+        const channels = await chatClient.queryChannels(filter, sort, {
+          watch: true,
+          state: true,
+        });
+        
+        console.log('Loaded chats:', channels.length);
+        setChannels(channels);
+        
+        // Select the first channel by default if available
+        if (channels.length > 0 && !selectedChannel) {
+          setSelectedChannel(channels[0]);
+        }
+      } catch (error) {
+        console.error('Error loading chats:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    if (chatClient) {
+      loadChannels();
+    }
+  }, [chatClient, currentUser]);
+
+  // Function to forward new messages to your AI backend
   const handleNewMessage = useCallback(async (event) => {
     // Only forward messages from the current user (not from the AI)
     if (event.user?.id === currentUser.userId) {
       try {
         console.log('Forwarding message to AI backend:', event);
-        
-        // Format the message according to what the backend expects
         const payload = {
           message: event.message,
           user: event.user,
           cid: event.cid,
           type: 'message.new'
         };
-        
-        // Send the message to your backend using the environment variable
         const response = await fetch(`${import.meta.env.VITE_BACKEND_API_URL}/ai/new-message`, {
           method: 'POST',
           headers: {
@@ -81,87 +116,13 @@ function Dashboard() {
     }
   }, [currentUser]);
 
-  // Load channels when chat client is ready
-  useEffect(() => {
-    const loadChannels = async () => {
-      if (!chatClient) {
-        console.log('Chat client not available');
-        setLoading(false);
-        return;
-      }
-      
-      try {
-        setLoading(true);
-        console.log('Loading channels for user:', currentUser?.userId);
-        
-        const filter = { type: 'messaging', members: { $in: [currentUser.userId] } };
-        const sort = [{ last_message_at: -1 }]; // Sort by most recent message
-        
-        const channels = await chatClient.queryChannels(filter, sort, {
-          watch: true,
-          state: true,
-        });
-        
-        console.log('Loaded chats:', channels.length);
-        setChannels(channels);
-        
-        // Select the first channel by default if available and no channel is currently selected
-        if (channels.length > 0 && !selectedChannel) {
-          setSelectedChannel(channels[0]);
-        }
-      } catch (error) {
-        console.error('Error loading chats:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    if (chatClient) {
-      loadChannels();
-    }
-  }, [chatClient, currentUser]);
-
-  // Load messages when a channel is selected and set up message listeners
+  // Listen for new and updated messages and update state
   useEffect(() => {
     if (selectedChannel) {
       const loadMessages = async () => {
         try {
-          // Get the last 25 messages
-          const response = await selectedChannel.query({ messages: { limit: 50 } }); // Increased limit to load more history
+          const response = await selectedChannel.query({ messages: { limit: 50 } });
           setMessages(response.messages);
-          
-          // Listen for new messages
-          selectedChannel.on('message.new', (event) => {
-            // Check if this message already exists in our state to prevent duplicates
-            setMessages((prevMessages) => {
-              // Check if we already have this message
-              const messageExists = prevMessages.some(msg => msg.id === event.message.id);
-              if (messageExists) {
-                return prevMessages; // Don't add duplicate
-              }
-              return [...prevMessages, event.message]; // Add new message
-            });
-            
-            // Only forward user messages to the AI backend
-            if (event.user?.id === currentUser.userId) {
-              handleNewMessage(event);
-            }
-            
-            // Move this channel to the top of the list
-            setChannels(prevChannels => {
-              const updatedChannels = [...prevChannels];
-              const channelIndex = updatedChannels.findIndex(c => c.id === selectedChannel.id);
-              
-              if (channelIndex > 0) {
-                // Remove the channel from its current position
-                const [channel] = updatedChannels.splice(channelIndex, 1);
-                // Add it to the beginning of the array
-                updatedChannels.unshift(channel);
-              }
-              
-              return updatedChannels;
-            });
-          });
         } catch (error) {
           console.error('Error loading messages:', error);
         }
@@ -169,9 +130,52 @@ function Dashboard() {
       
       loadMessages();
       
-      // Cleanup listener when component unmounts or channel changes
+      // Listener for new messages
+      const handleMessageNew = (event) => {
+        setMessages((prevMessages) => {
+          // Avoid duplicate messages
+          const messageExists = prevMessages.some(msg => msg.id === event.message.id);
+          if (messageExists) return prevMessages;
+          return [...prevMessages, event.message];
+        });
+        
+        // Forward user messages to AI backend
+        if (event.user?.id === currentUser.userId) {
+          handleNewMessage(event);
+        }
+        
+        // Bring channel to top of list
+        setChannels(prevChannels => {
+          const updatedChannels = [...prevChannels];
+          const channelIndex = updatedChannels.findIndex(c => c.id === selectedChannel.id);
+          if (channelIndex > 0) {
+            const [channel] = updatedChannels.splice(channelIndex, 1);
+            updatedChannels.unshift(channel);
+          }
+          return updatedChannels;
+        });
+      };
+
+      selectedChannel.on('message.new', handleMessageNew);
+
+      // Listener for updated messages (for streaming partial updates)
+      const handleMessageUpdated = (event) => {
+        setMessages(prevMessages => {
+          const index = prevMessages.findIndex(msg => msg.id === event.message.id);
+          if (index !== -1) {
+            const updatedMessages = [...prevMessages];
+            updatedMessages[index] = event.message;
+            return updatedMessages;
+          }
+          return prevMessages;
+        });
+      };
+
+      selectedChannel.on('message.updated', handleMessageUpdated);
+
       return () => {
-        selectedChannel.off('message.new');
+        selectedChannel.off('message.new', handleMessageNew);
+        selectedChannel.off('message.updated', handleMessageUpdated);
       };
     }
   }, [selectedChannel, handleNewMessage, currentUser]);
@@ -201,11 +205,8 @@ function Dashboard() {
     if (newChannelName.trim() === '' || !chatClient) return;
     
     try {
-      // Create a unique channel ID
       const channelId = `${newChannelName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
       
-      // Create the channel with the current user and AI bot as members
-      // Use the environment variable for the AI bot user ID
       const channel = chatClient.channel('messaging', channelId, {
         name: newChannelName,
         members: [currentUser.userId, import.meta.env.VITE_AI_BOT_USER_ID],
@@ -215,19 +216,14 @@ function Dashboard() {
       await channel.create();
       console.log('Chat created successfully:', channel.id);
       
-      // Watch the channel to receive updates
       await channel.watch();
       
-      // Add the new channel at the beginning of the array
+      // Add the new channel on top of the list without reloading all chats
       setChannels((prevChannels) => [channel, ...prevChannels]);
-      
-      // Set as selected channel and clear messages
       setSelectedChannel(channel);
       setMessages([]);
       setNewChannelName('');
       setShowNewChannelForm(false);
-      
-      // No welcome message - removed as requested
     } catch (error) {
       console.error('Error creating chat:', error);
       alert('Failed to create chat: ' + error.message);
@@ -236,19 +232,16 @@ function Dashboard() {
 
   const selectChannel = async (channel) => {
     setSelectedChannel(channel);
-    
-    // Clear messages while loading
     setMessages([]);
     
     try {
-      // Get the last 25 messages
       const response = await channel.query({ messages: { limit: 25 } });
       setMessages(response.messages);
     } catch (error) {
       console.error('Error loading messages:', error);
     }
     
-    if (window.innerWidth < 768) { // Mobile view
+    if (window.innerWidth < 768) {
       setSidebarCollapsed(true);
     }
   };
@@ -263,11 +256,10 @@ function Dashboard() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-100">
-      {/* Enhanced Header with AI Coach branding */}
+      {/* Header */}
       <header className="bg-white shadow-md z-10 flex-shrink-0">
         <div className="max-w-7xl mx-auto py-3 px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center">
-            {/* Left section with logo and toggle */}
             <div className="flex items-center">
               <button 
                 onClick={toggleSidebar}
@@ -288,8 +280,6 @@ function Dashboard() {
                 <span>AI Coach</span>
               </h1>
             </div>
-            
-            {/* Right section with user info and actions */}
             <div className="flex items-center space-x-4">
               <button className="p-2 rounded-full hover:bg-gray-100" aria-label="Notifications">
                 <Bell size={20} className="text-gray-600" />
@@ -459,7 +449,7 @@ function Dashboard() {
                 </div>
               </div>
               
-              {/* Messages with Markdown support */}
+              {/* Messages */}
               <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
                 {messages.length === 0 ? (
                   <div className="text-center text-gray-500 mt-10">
@@ -495,7 +485,6 @@ function Dashboard() {
                             </p>
                           )}
                           
-                          {/* Render AI messages with markdown, user messages as plain text */}
                           {message.user?.id === currentUser.userId ? (
                             <p>{message.text}</p>
                           ) : (
@@ -549,4 +538,4 @@ function Dashboard() {
   );
 }
 
-export default Dashboard; 
+export default Dashboard;
