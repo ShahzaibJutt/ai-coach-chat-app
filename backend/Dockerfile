@@ -34,4 +34,4 @@ RUN uv sync --frozen
 EXPOSE 8000
 
 # Run the FastAPI app with uvicorn in reload mode
-CMD ["uvicorn", "app.main:app", "--reload"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--reload"]
