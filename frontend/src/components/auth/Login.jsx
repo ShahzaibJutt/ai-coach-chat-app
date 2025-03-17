@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
-import { Link, useNavigate } from 'react-router-dom';
-import { User, Lock, LogIn, Brain } from 'lucide-react';
+import {useState} from 'react';
+import {useAuth} from '../../contexts/AuthContext';
+import {Link, useNavigate} from 'react-router-dom';
+import {Brain, Lock, LogIn, User} from 'lucide-react';
 
 const Login = () => {
-    const { login } = useAuth();
+    const {login} = useAuth();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -16,6 +16,12 @@ const Login = () => {
         setError('');
         setLoading(true);
         try {
+            // Additional validation if needed on submit
+            if (username !== username.toLowerCase()) {
+                setError('Username must be in lowercase.');
+                setLoading(false);
+                return;
+            }
             await login(username, password);
             navigate('/dashboard');
         } catch (err) {
@@ -30,13 +36,17 @@ const Login = () => {
             <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
                 <div className="text-center mb-8">
                     <div className="flex justify-center mb-4">
-                        <Brain size={48} className="text-blue-600" />
+                        <Brain size={48} className="text-blue-600"/>
                     </div>
                     <h2 className="text-3xl font-bold text-gray-800">AI Coach</h2>
                     <p className="text-gray-600 mt-2">Sign in to your account</p>
                 </div>
-                
-                {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">{error}</div>}
+
+                {error && (
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                        {error}
+                    </div>
+                )}
                 <form onSubmit={handleSubmit}>
                     <div className="mb-4">
                         <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="username">
@@ -44,7 +54,7 @@ const Login = () => {
                         </label>
                         <div className="relative">
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <User size={18} className="text-gray-500" />
+                                <User size={18} className="text-gray-500"/>
                             </div>
                             <input
                                 id="username"
@@ -52,7 +62,11 @@ const Login = () => {
                                 className="pl-10 w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="Username"
                                 value={username}
-                                onChange={(e) => setUsername(e.target.value)}
+                                // Automatically convert any input to lowercase.
+                                onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                                // Ensure only lowercase letters are allowed.
+                                pattern="^[a-z]+$"
+                                title="Username must contain only lowercase letters."
                                 required
                             />
                         </div>
@@ -63,7 +77,7 @@ const Login = () => {
                         </label>
                         <div className="relative">
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <Lock size={18} className="text-gray-500" />
+                                <Lock size={18} className="text-gray-500"/>
                             </div>
                             <input
                                 id="password"
@@ -81,7 +95,7 @@ const Login = () => {
                         disabled={loading}
                         className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center justify-center"
                     >
-                        <LogIn size={18} className="mr-2" />
+                        <LogIn size={18} className="mr-2"/>
                         {loading ? 'Logging in...' : 'Log In'}
                     </button>
                 </form>
